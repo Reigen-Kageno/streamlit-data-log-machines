@@ -1,0 +1,9 @@
+timestamp,machine_name,status,failure_description
+2024-08-09 08:55:00,Machine 2,On,
+2024-08-09 09:02:42,Machine 1,On,
+2024-08-09 09:02:52,Machine 4,On,
+2024-08-09 09:03:27,Machine 6,On,
+2024-08-09 09:03:59,Machine 1,Off,
+2024-08-09 09:07:28,Machine 4,Off,
+2024-08-09 09:07:38,Machine 4,Failure,panne
+2024-08-09 10:08:54,Machine 5,On,
