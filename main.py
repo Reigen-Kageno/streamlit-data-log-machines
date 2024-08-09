@@ -1,99 +1,132 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
+import os
+import hashlib
 
-st.title("Machine Log Entry")
+CSV_FILE = "machine_logs.csv"
+MACHINES = ["Machine 1", "Machine 2", "Machine 3", "Machine 4", "Machine 5", "Machine 6"]
 
-# Sidebar for user login
-st.sidebar.header("User Login")
-username = st.sidebar.text_input("Username")
-password = st.sidebar.text_input("Password", type="password")
-login_button = st.sidebar.button("Login")
+# Simulated user database (in a real application, use a secure database)
+USERS = {
+    "operator1": "password1",
+    "operator2": "password2",
+    "supervisor": "super_password"
+}
 
-if login_button:
-    st.sidebar.success(f"Logged in as {username}")
+def load_data():
+    if os.path.exists(CSV_FILE):
+        return pd.read_csv(CSV_FILE)
+    return pd.DataFrame(columns=["timestamp", "machine_name", "status", "failure_description", "operator"])
 
-# Main section for logging machine data
-st.header("Log Machine Data")
+def save_data(df):
+    df.to_csv(CSV_FILE, index=False)
 
-# Machine selection
-machine_id = st.selectbox("Select Machine",
-                          ["Machine 1", "Machine 2", "Machine 3"])
+def log_status(df, machine_name, status, failure_description="", operator=""):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_log = pd.DataFrame({
+        "timestamp": [timestamp],
+        "machine_name": [machine_name],
+        "status": [status],
+        "failure_description": [failure_description],
+        "operator": [operator]
+    })
+    updated_df = pd.concat([df, new_log], ignore_index=True)
+    save_data(updated_df)
+    return updated_df
 
-# Action selection
-action = st.radio("Action", ["Start", "Stop"])
+def get_last_machine_statuses(df):
+    if df.empty:
+        return {machine: False for machine in MACHINES}
+    
+    last_statuses = {}
+    for machine in MACHINES:
+        machine_df = df[df['machine_name'] == machine]
+        if not machine_df.empty:
+            last_status = machine_df.iloc[-1]['status']
+            last_statuses[machine] = (last_status == 'On')
+        else:
+            last_statuses[machine] = False
+    return last_statuses
 
-# Failure input
-failure = st.text_area("Failure (if any)")
+def check_password(username, password):
+    if username in USERS and USERS[username] == password:
+        return True
+    return False
 
-submit_button = st.button("Submit")
+def login():
+    st.sidebar.title("Login")
+    username = st.sidebar.text_input("Username")
+    password = st.sidebar.text_input("Password", type="password")
+    if st.sidebar.button("Login"):
+        if check_password(username, password):
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.sidebar.success(f"Logged in as {username}")
+        else:
+            st.sidebar.error("Invalid username or password")
 
-if submit_button:
-    if username and password:
-        # Capture the current time
-        current_time = datetime.now()
+def main():
+    st.title("Machine Status Logger")
 
-        # Create a DataFrame to store the log data
-        log_data = {
-            "Machine ID": [machine_id],
-            "Action": [action],
-            "Time": [current_time],
-            "Failure": [failure],
-            "Logged By": [username],
-            "Timestamp": [current_time]
-        }
-        df = pd.DataFrame(log_data)
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
 
-        # Save the data to a CSV file (or any other storage)
-        df.to_csv("machine_log.csv", mode='a', header=False, index=False)
+    if not st.session_state.logged_in:
+        login()
+        st.warning("Please log in to use the application.")
+        return
 
-        st.success("Data logged successfully!")
-    else:
-        st.error("Please log in to submit data.")
+    # Load existing data
+    df = load_data()
 
-# Load the logged data
-try:
-    log_df = pd.read_csv("machine_log.csv",
-                         names=[
-                             "Machine ID", "Action", "Time", "Failure",
-                             "Logged By", "Timestamp"
-                         ])
-    log_df["Time"] = pd.to_datetime(log_df["Time"])
+    # Initialize session state for machine statuses
+    if 'machine_statuses' not in st.session_state:
+        st.session_state.machine_statuses = get_last_machine_statuses(df)
 
-    # Calculate hours worked
-    def calculate_hours(df):
-        df = df.sort_values(by="Time")
-        df["Next Action"] = df["Action"].shift(-1)
-        df["Next Time"] = df["Time"].shift(-1)
-        df = df[(df["Action"] == "Start") & (df["Next Action"] == "Stop")]
-        df["Duration"] = (df["Next Time"] -
-                          df["Time"]).dt.total_seconds() / 3600
-        return df
+    # Create two columns
+    col1, col2 = st.columns(2)
 
-    hours_df = log_df.groupby("Machine ID").apply(calculate_hours).reset_index(
-        drop=True)
+    # Machine status buttons
+    with col1:
+        st.subheader("Machine Statuses")
+        for machine in MACHINES:
+            if st.button(f"{machine}: {'On' if st.session_state.machine_statuses[machine] else 'Off'}"):
+                new_status = not st.session_state.machine_statuses[machine]
+                st.session_state.machine_statuses[machine] = new_status
+                df = log_status(df, machine, "On" if new_status else "Off", operator=st.session_state.username)
+                st.success(f"Logged {'On' if new_status else 'Off'} status for {machine}")
 
-    # Calculate total hours by day, week, and month
-    hours_df["Date"] = hours_df["Time"].dt.date
-    daily_hours = hours_df.groupby(["Machine ID",
-                                    "Date"])["Duration"].sum().reset_index()
-    weekly_hours = hours_df.groupby([
-        "Machine ID", pd.Grouper(key="Time", freq="W-MON")
-    ])["Duration"].sum().reset_index()
-    monthly_hours = hours_df.groupby(
-        ["Machine ID", pd.Grouper(key="Time",
-                                  freq="M")])["Duration"].sum().reset_index()
+    # Failure logging
+    with col2:
+        st.subheader("Failure Logging")
+        failure_machine = st.selectbox("Select Machine", MACHINES)
+        failure_description = st.text_area("Failure Description")
+        if st.button("Log Failure"):
+            if failure_description:
+                df = log_status(df, failure_machine, "Failure", failure_description, operator=st.session_state.username)
+                st.success(f"Logged failure for {failure_machine}")
+            else:
+                st.warning("Please enter a failure description")
 
-    # Display the results
-    st.header("Hours Worked by Machine")
-    st.subheader("Daily Hours")
-    st.dataframe(daily_hours)
+    # Display logs
+    st.header("Machine Logs")
+    st.dataframe(df)
 
-    st.subheader("Weekly Hours")
-    st.dataframe(weekly_hours)
+    # Add download button for CSV
+    csv = df.to_csv(index=False)
+    st.download_button(
+        label="Download CSV",
+        data=csv,
+        file_name="machine_logs.csv",
+        mime="text/csv",
+    )
 
-    st.subheader("Monthly Hours")
-    st.dataframe(monthly_hours)
+    # Logout button
+    if st.sidebar.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.username = None
+        st.experimental_rerun()
 
-except FileNotFoundError:
-    st.warning("No log data found. Please log some data first.")
+if __name__ == "__main__":
+    main()
